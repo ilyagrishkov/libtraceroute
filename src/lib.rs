@@ -22,12 +22,12 @@ SOFTWARE.
 
 extern crate pnet;
 
-use pnet::packet::ethernet::{EtherTypes, EthernetPacket, MutableEthernetPacket};
+use pnet::packet::ethernet::{EtherTypes, EthernetPacket};
 use pnet::packet::icmp::{IcmpPacket, IcmpTypes};
-use pnet::packet::ip::{IpNextHeaderProtocol, IpNextHeaderProtocols};
+use pnet::packet::ip::IpNextHeaderProtocols;
 use pnet::packet::ipv4::Ipv4Packet;
 use pnet::packet::Packet;
-use pnet::datalink::{channel, NetworkInterface, MacAddr, DataLinkReceiver};
+use pnet::datalink::{channel, NetworkInterface, DataLinkReceiver};
 use std::net::IpAddr;
 use std::net::UdpSocket;
 use std::time::Duration;
@@ -60,9 +60,7 @@ impl Iterator for TracerouteQuery {
         let hop = self.get_next_hop();
         match hop {
             Ok(h) => {
-                if h.addr == self.addr {
-                    self.done = true;
-                }
+                self.done = h.addr == self.addr;
                 Some(h)
             }
             Err(_) => None
@@ -73,18 +71,16 @@ impl Iterator for TracerouteQuery {
 impl TracerouteQuery {
     /// Creates new instance of TracerouteQuery.
     pub fn new(addr: String, port: u16, max_hops: u32) -> Self {
-        let socket = match UdpSocket::bind("0.0.0.0:33434") {
-            Ok(s) => s,
-            Err(e) => panic!("couldn't bind socket: {}", e),
-        };
+        let socket = UdpSocket::bind("0.0.0.0:33434")
+            .expect("couldn't bind socket");
 
         let default_interface = get_default_interface()
             .expect("couldn't find default interface");
 
         let (_, rx) = match channel(&default_interface, Default::default()) {
             Ok(pnet::datalink::Channel::Ethernet(tx, rx)) => (tx, rx),
-            Ok(_) => panic!("packetdump: unhandled channel type: {}"),
-            Err(e) => panic!("packetdump: unable to create channel: {}", e),
+            Ok(_) => panic!("libtraceroute: unhandled channel type"),
+            Err(e) => panic!("libtraceroute: unable to create channel: {}", e),
         };
 
         TracerouteQuery {
@@ -110,7 +106,6 @@ impl TracerouteQuery {
         let hop_ip: String = loop {
             match process_incoming_packet(&mut self.datalink_receiver, &self.interface) {
                 Ok(ip) => break ip,
-                // Change the way timeout it applied
                 Err(_) => {
                     match now.elapsed() {
                         Ok(t) => {
@@ -139,7 +134,6 @@ impl TracerouteQuery {
                 None => {}
             }
         }
-
         return hops;
     }
 }
@@ -149,79 +143,55 @@ impl TracerouteQuery {
 /// Berkeley Packet filter formula: `icmp and (icmp[0] = 11) or (icmp[0] = 3)`, thus
 /// accepting all ICMP packets that have information about the status of UDP packets used for
 /// traceroute.
-fn handle_icmp_packet(source: IpAddr, _destination: IpAddr, packet: &[u8]) -> Result<String, &'static str> {
-    let icmp_packet = IcmpPacket::new(packet);
-    if let Some(icmp_packet) = icmp_packet {
-        match icmp_packet.get_icmp_type() {
-            IcmpTypes::TimeExceeded => Ok(source.to_string()),
-            IcmpTypes::DestinationUnreachable => Ok(source.to_string()),
-            _ => Err("wrong packet")
-        }
-    } else {
-        Err("malformed ICMP Packet")
-    }
-}
+fn handle_icmp_packet(source: IpAddr, packet: &[u8]) -> Result<String, &'static str> {
+    let icmp_packet = IcmpPacket::new(packet).expect("malformed ICMP packet");
 
-/// Filters out all packets that are not ICMP and passes ICMP packets to next handler.
-fn handle_transport_protocol(source: IpAddr, destination: IpAddr, protocol: IpNextHeaderProtocol,
-                             packet: &[u8]) -> Result<String, &'static str> {
-    match protocol {
-        IpNextHeaderProtocols::Icmp => {
-            return handle_icmp_packet(source, destination, packet);
-        }
+    match icmp_packet.get_icmp_type() {
+        IcmpTypes::TimeExceeded => Ok(source.to_string()),
+        IcmpTypes::DestinationUnreachable => Ok(source.to_string()),
         _ => Err("wrong packet")
     }
 }
 
 /// Processes IPv4 packet and passes it on to transport layer packet handler.
-fn handle_ipv4_packet(ethernet: &EthernetPacket) -> Result<String, &'static str> {
-    let header = Ipv4Packet::new(ethernet.payload()).unwrap();
-    return handle_transport_protocol(
-        IpAddr::V4(header.get_source()),
-        IpAddr::V4(header.get_destination()),
-        header.get_next_level_protocol(),
-        header.payload());
+fn handle_ipv4_packet(packet: &[u8]) -> Result<String, &'static str> {
+    let header = Ipv4Packet::new(packet).expect("malformed IPv4 packet");
+
+    let source = IpAddr::V4(header.get_source());
+    let payload = header.payload();
+
+    match header.get_next_level_protocol() {
+        IpNextHeaderProtocols::Icmp => handle_icmp_packet(source, payload),
+        _ => Err("wrong packet")
+    }
 }
 
-// TODO: merge with IPv4 handler
 /// Processes ethernet frame and rejects all packets that are not IPv4.
-fn handle_ethernet_frame(ethernet: &EthernetPacket) -> Result<String, &'static str> {
+fn handle_ethernet_frame(packet: &[u8]) -> Result<String, &'static str> {
+    let ethernet = EthernetPacket::new(packet).expect("malformed Ethernet frame");
     match ethernet.get_ethertype() {
-        EtherTypes::Ipv4 => return handle_ipv4_packet(ethernet),
+        EtherTypes::Ipv4 => return handle_ipv4_packet(ethernet.payload()),
         _ => Err("wrong packet")
     }
 }
 
 /// Start capturing packets until until expected ICMP packet was received.
-fn process_incoming_packet(rx: &mut Box<dyn pnet::datalink::DataLinkReceiver>,
-                           interface: &pnet::datalink::NetworkInterface) -> Result<String, &'static str> {
-    let mut buf: [u8; 1600] = [0u8; 1600];
-    let mut temp_ethernet_frame = MutableEthernetPacket::new(&mut buf[..]).unwrap();
+fn process_incoming_packet(rx: &mut Box<dyn DataLinkReceiver>,
+                           interface: &NetworkInterface) -> Result<String, &'static str> {
     match rx.next() {
         Ok(packet) => {
-            let payload_offset;
             if cfg!(any(target_os = "macos", target_os = "ios"))
-                && interface.is_up()
-                && !interface.is_broadcast()
+                && interface.is_up() && !interface.is_broadcast()
                 && ((!interface.is_loopback() && interface.is_point_to_point())
-                || interface.is_loopback())
-            {
-                if interface.is_loopback() {
-                    payload_offset = 14;
-                } else {
-                    payload_offset = 0;
-                }
+                || interface.is_loopback()) {
+                let payload_offset = if interface.is_loopback() { 14 } else { 0 };
                 if packet.len() > payload_offset {
-                    temp_ethernet_frame.set_destination(MacAddr(0, 0, 0, 0, 0, 0));
-                    temp_ethernet_frame.set_source(MacAddr(0, 0, 0, 0, 0, 0));
-                    temp_ethernet_frame.set_ethertype(EtherTypes::Ipv4);
-                    temp_ethernet_frame.set_payload(&packet[payload_offset..]);
-                    return handle_ethernet_frame(&temp_ethernet_frame.to_immutable());
+                    return handle_ipv4_packet(&packet[payload_offset..]);
                 }
             }
-            return handle_ethernet_frame(&EthernetPacket::new(packet).unwrap());
+            return handle_ethernet_frame(packet);
         }
-        Err(e) => panic!("packetdump: unable to receive packet: {}", e),
+        Err(e) => panic!("libtraceroute: unable to receive packet: {}", e),
     }
 }
 
@@ -238,6 +208,6 @@ fn get_default_interface() -> Result<NetworkInterface, &'static str> {
 
     match interface {
         Some(i) => Ok(i.clone()),
-        None => Err("couldn't find default interface")
+        None => Err("libtraceroute: couldn't find default interface")
     }
 }
