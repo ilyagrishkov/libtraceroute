@@ -1,0 +1,15 @@
+[package]
+name = "libtraceroute"
+version = "0.1.0"
+authors = ["Ilya Grishkov <ilyagrishkov@icloud.com>"]
+edition = "2018"
+license = "MIT"
+homepage = "https://github.com/ilyagrishkov/libtraceroute"
+repository = "https://github.com/ilyagrishkov/libtraceroute"
+description = "Cross-platform traceroute library for Rust"
+readme = "README.md"
+keywords = ["traceroute", "networking", "transport", "datalink", "udp", "icmp"]
+categories = ["network-anlysis"]
+
+[dependencies]
+pnet = "0.26.0"

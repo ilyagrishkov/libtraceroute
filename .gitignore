@@ -1,0 +1,8 @@
+# Rust specific
+/target
+
+# Clion specific
+.idea/
+
+# MacOS specific
+.DS_Store
