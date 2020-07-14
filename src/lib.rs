@@ -22,29 +22,31 @@ SOFTWARE.
 
 extern crate pnet;
 
-use pnet::packet::ethernet::{EtherTypes, EthernetPacket};
+use pnet::packet::ethernet::{EtherTypes, EthernetPacket, MutableEthernetPacket};
 use pnet::packet::icmp::{IcmpPacket, IcmpTypes};
 use pnet::packet::ip::IpNextHeaderProtocols;
-use pnet::packet::ipv4::Ipv4Packet;
-use pnet::packet::Packet;
-use pnet::datalink::{channel, NetworkInterface, DataLinkReceiver};
-use std::net::IpAddr;
-use std::net::UdpSocket;
+use pnet::packet::ipv4::{Ipv4Packet, MutableIpv4Packet};
+use pnet::packet::udp::MutableUdpPacket;
+use pnet::packet::{Packet, MutablePacket};
+use pnet::datalink::{channel, NetworkInterface, DataLinkReceiver, DataLinkSender};
+use std::net::{IpAddr, Ipv4Addr};
 use std::time::Duration;
+use pnet::util::MacAddr;
+use std::str::FromStr;
 
 pub struct TracerouteQuery {
     addr: String,
     port: u16,
     max_hops: u32,
     interface: NetworkInterface,
-    ttl: u32,
-    udp_socket: UdpSocket,
+    ttl: u8,
     datalink_receiver: Box<dyn DataLinkReceiver>,
+    datalink_sender: Box<dyn DataLinkSender>,
     done: bool,
 }
 
 pub struct TracerouteHop {
-    pub ttl: u32,
+    pub ttl: u8,
     pub rtt: Duration,
     pub addr: String,
 }
@@ -71,13 +73,10 @@ impl Iterator for TracerouteQuery {
 impl TracerouteQuery {
     /// Creates new instance of TracerouteQuery.
     pub fn new(addr: String, port: u16, max_hops: u32) -> Self {
-        let socket = UdpSocket::bind("0.0.0.0:33434")
-            .expect("couldn't bind socket");
-
         let default_interface = get_default_interface()
             .expect("couldn't find default interface");
 
-        let (_, rx) = match channel(&default_interface, Default::default()) {
+        let (tx, rx) = match channel(&default_interface, Default::default()) {
             Ok(pnet::datalink::Channel::Ethernet(tx, rx)) => (tx, rx),
             Ok(_) => panic!("libtraceroute: unhandled channel type"),
             Err(e) => panic!("libtraceroute: unable to create channel: {}", e),
@@ -89,8 +88,8 @@ impl TracerouteQuery {
             max_hops,
             interface: default_interface,
             ttl: 1,
-            udp_socket: socket,
             datalink_receiver: rx,
+            datalink_sender: tx,
             done: false,
         }
     }
@@ -99,9 +98,22 @@ impl TracerouteQuery {
     /// Get next hop on the route. Increases TTL.
     pub fn get_next_hop(&mut self) -> Result<TracerouteHop, &'static str> {
         let now = std::time::SystemTime::now();
-        self.udp_socket.set_ttl(self.ttl).expect("couldn't set TTL");
 
-        self.udp_socket.send_to("".as_ref(), (self.addr.as_str(), self.port)).expect("couldn't send to UDP packet");
+        let source = self.interface.ips
+            .iter()
+            .filter(|i| i.is_ipv4())
+            .next()
+            .expect("couldn't get interface IP")
+            .ip()
+            .to_string();
+
+        let mut buffer = [0u8; 42];
+        let source = Ipv4Addr::from_str(source.as_str()).expect("malformed source ip");
+        let destination = Ipv4Addr::from_str(self.addr.as_str()).expect("malformed destination ip");
+
+        let ethernet_header = build_ether(&mut buffer, source, destination, self.port, self.interface.mac.unwrap(), self.ttl);
+
+        self.datalink_sender.send_to(ethernet_header.packet(), None);
 
         let hop_ip: String = loop {
             match process_incoming_packet(&mut self.datalink_receiver, &self.interface) {
@@ -136,6 +148,35 @@ impl TracerouteQuery {
         }
         return hops;
     }
+}
+
+fn build_ether(buf: &mut [u8], source_ip: Ipv4Addr, destination_ip: Ipv4Addr, port: u16, source_mac: MacAddr, ttl: u8) -> Box<EthernetPacket> {
+    let mut mut_ethernet_header = MutableEthernetPacket::new(&mut buf[..]).unwrap();
+
+    mut_ethernet_header.set_destination(MacAddr::zero());
+    mut_ethernet_header.set_source(source_mac);
+    mut_ethernet_header.set_ethertype(EtherTypes::Ipv4);
+
+    let mut ip_header = MutableIpv4Packet::new(mut_ethernet_header.payload_mut()).unwrap();
+
+    ip_header.set_version(4);
+    ip_header.set_header_length(5);
+    ip_header.set_total_length(28);
+    ip_header.set_ttl(ttl);
+    ip_header.set_next_level_protocol(IpNextHeaderProtocols::Udp);
+    ip_header.set_source(source_ip);
+    ip_header.set_destination(destination_ip);
+    ip_header.set_checksum(pnet::packet::ipv4::checksum(&ip_header.to_immutable()));
+
+    let mut udp_header = MutableUdpPacket::new(ip_header.payload_mut()).unwrap();
+
+    udp_header.set_source(port);
+    udp_header.set_destination(port);
+    udp_header.set_length(8 as u16);
+    udp_header.set_checksum(pnet::packet::udp::ipv4_checksum(&udp_header.to_immutable(),
+                                                             &source_ip, &destination_ip));
+
+    Box::new(EthernetPacket::new(buf).unwrap())
 }
 
 // TODO: add checks for ICMP code icmp[1] = 0 and icmp[1] = 3
@@ -203,7 +244,7 @@ fn get_default_interface() -> Result<NetworkInterface, &'static str> {
     let interfaces = pnet::datalink::interfaces();
     let interface = interfaces
         .iter()
-        .filter(|e| e.is_up() && !e.is_loopback() && e.ips.len() > 0)
+        .filter(|e| e.is_up() && !e.is_loopback() && e.ips.len() > 0 && e.mac.is_some())
         .next();
 
     match interface {
