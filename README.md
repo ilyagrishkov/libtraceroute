@@ -14,7 +14,7 @@
 **Libtraceroute** is a cross-platform traceroute library for Rust, that allows displaying possible routes (paths) and measuring transit delays of packets across an Internet Protocol (IP) network. Libtraceroute uses ![pnet](https://github.com/libpnet/libpnet), a low-level networking library, to send and capture packets at the  data link layer, which allows it to operate without the need for root privileges. 
 
 
-<br/><br/>
+<br/>
 
 ## <div align="center"> FEATURES </div>
 **Libtraceroute** works at the data link layer with custom-built packets, which provides the user with a lot of options for customizations. The library allows to configure the following parameters:  
