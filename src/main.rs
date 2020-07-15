@@ -30,9 +30,9 @@ fn main() {
     let port = 33434;
     let max_hops = 30;
 
-    let mut query = TracerouteQuery::new(String::from(addr), port, max_hops);
+    let query = TracerouteQuery::new(String::from(addr), port, max_hops);
 
-    for hop in query.perform_traceroute() {
+    for hop in query {
         println!("{} - {}", hop.ttl, hop.addr);
     }
 }
