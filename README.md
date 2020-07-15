@@ -11,20 +11,16 @@
 </div>
 
 ## <div align="center"> OVERVIEW </div>
-**Libtraceroute** is a cross-platform traceroute library for Rust, that allows displaying possible routes (paths) and measuring transit delays of packets across an Internet Protocol (IP) network. Libtraceroute uses ![pnet](https://github.com/libpnet/libpnet), a low-level networking library, to send and capture packets on datalink layer, which allows it to operate without root priviledges. 
+**Libtraceroute** is a cross-platform traceroute library for Rust, that allows displaying possible routes (paths) and measuring transit delays of packets across an Internet Protocol (IP) network. Libtraceroute uses ![pnet](https://github.com/libpnet/libpnet), a low-level networking library, to send and capture packets at the  data link layer, which allows it to operate without the need for root privileges. 
 
 
 <br/><br/>
 
 ## <div align="center"> FEATURES </div>
-**Libtraceroute** allows to configure the following parameters:
-- [REQUIRED] Destination address
-- Maximum number of hops
-- Port
-- [WIP] Number of queries per hop
-- [WIP] Timeoute per query
-- [WIP] Network interface 
-- [WIP] Protocol
+**Libtraceroute** works at the data link layer with custom-built packets, which provides the user with a lot of options for customizations. The library allows to configure the following parameters:  
+- **_[REQUIRED]_** - Destination address    
+- **_[OPTIONAL]_** -  Maximum number of hops &emsp; Port &emsp;  
+- **_[WIP]_** - Number of queries per hop &emsp; Timeout per query &emsp; Network interface &emsp; Protocol
 
 <br/><br/>
 
@@ -37,7 +33,7 @@ To use **libtraceroute** in your project, add the following to your Cargo.toml:
 libtraceroute = "0.1.0"
 ```
 
-**NOTE!** If you are using Windows, then follow these instructions to make ![pnet](https://github.com/libpnet/libpnet) work:
+**NOTE!** If you are using Windows, follow these instructions to make ![pnet](https://github.com/libpnet/libpnet) work:
 > ### Windows
 > * You must use a version of Rust which uses the MSVC toolchain
 > * You must have [WinPcap](https://www.winpcap.org/) or [npcap](https://nmap.org/npcap/) installed
