@@ -16,29 +16,31 @@
 
 extern crate pnet;
 
-use pnet::packet::ethernet::{EtherTypes, EthernetPacket};
+use pnet::packet::ethernet::{EtherTypes, EthernetPacket, MutableEthernetPacket};
 use pnet::packet::icmp::{IcmpPacket, IcmpTypes};
 use pnet::packet::ip::IpNextHeaderProtocols;
-use pnet::packet::ipv4::Ipv4Packet;
-use pnet::packet::Packet;
-use pnet::datalink::{channel, NetworkInterface, DataLinkReceiver};
-use std::net::IpAddr;
-use std::net::UdpSocket;
+use pnet::packet::ipv4::{Ipv4Packet, MutableIpv4Packet};
+use pnet::packet::udp::MutableUdpPacket;
+use pnet::packet::{Packet, MutablePacket};
+use pnet::datalink::{channel, NetworkInterface, DataLinkReceiver, DataLinkSender};
+use std::net::{IpAddr, Ipv4Addr};
 use std::time::Duration;
+use pnet::util::MacAddr;
+use std::str::FromStr;
 
 pub struct TracerouteQuery {
     addr: String,
     port: u16,
     max_hops: u32,
     interface: NetworkInterface,
-    ttl: u32,
-    udp_socket: UdpSocket,
+    ttl: u8,
     datalink_receiver: Box<dyn DataLinkReceiver>,
+    datalink_sender: Box<dyn DataLinkSender>,
     done: bool,
 }
 
 pub struct TracerouteHop {
-    pub ttl: u32,
+    pub ttl: u8,
     pub rtt: Duration,
     pub addr: String,
 }
@@ -54,7 +56,7 @@ impl Iterator for TracerouteQuery {
         let hop = self.get_next_hop();
         match hop {
             Ok(h) => {
-                self.done = h.addr == self.addr;
+                self.done = h.addr == self.addr || self.ttl > self.max_hops as u8;
                 Some(h)
             }
             Err(_) => None
@@ -65,13 +67,13 @@ impl Iterator for TracerouteQuery {
 impl TracerouteQuery {
     /// Creates new instance of TracerouteQuery.
     pub fn new(addr: String, port: u16, max_hops: u32) -> Self {
-        let socket = UdpSocket::bind("0.0.0.0:33434")
-            .expect("couldn't bind socket");
+        let available_interfaces = get_available_interfaces()
+            .expect("couldn't get available interfaces");
 
-        let default_interface = get_default_interface()
-            .expect("couldn't find default interface");
+        let default_interface = available_interfaces.get(0)
+            .expect("couldn't get default interface").clone();
 
-        let (_, rx) = match channel(&default_interface, Default::default()) {
+        let (tx, rx) = match channel(&default_interface, Default::default()) {
             Ok(pnet::datalink::Channel::Ethernet(tx, rx)) => (tx, rx),
             Ok(_) => panic!("libtraceroute: unhandled channel type"),
             Err(e) => panic!("libtraceroute: unable to create channel: {}", e),
@@ -83,37 +85,10 @@ impl TracerouteQuery {
             max_hops,
             interface: default_interface,
             ttl: 1,
-            udp_socket: socket,
             datalink_receiver: rx,
+            datalink_sender: tx,
             done: false,
         }
-    }
-
-    // TODO: find a cleaner and more reliable way of timeout.
-    /// Get next hop on the route. Increases TTL.
-    pub fn get_next_hop(&mut self) -> Result<TracerouteHop, &'static str> {
-        let now = std::time::SystemTime::now();
-        self.udp_socket.set_ttl(self.ttl).expect("couldn't set TTL");
-
-        self.udp_socket.send_to("".as_ref(), (self.addr.as_str(), self.port)).expect("couldn't send to UDP packet");
-
-        let hop_ip: String = loop {
-            match process_incoming_packet(&mut self.datalink_receiver, &self.interface) {
-                Ok(ip) => break ip,
-                Err(_) => {
-                    match now.elapsed() {
-                        Ok(t) => {
-                            if t.as_secs() > 2 {
-                                break String::from("*");
-                            }
-                        }
-                        Err(_) => {}
-                    }
-                }
-            }
-        };
-        self.ttl += 1;
-        Ok(TracerouteHop { ttl: self.ttl - 1, rtt: Duration::from_millis(10), addr: hop_ip })
     }
 
     /// Returns a vector of traceroute hops.
@@ -130,7 +105,77 @@ impl TracerouteQuery {
         }
         return hops;
     }
+
+    // TODO: find a cleaner and more reliable way of timeout.
+    /// Get next hop on the route. Increases TTL.
+    fn get_next_hop(&mut self) -> Result<TracerouteHop, &'static str> {
+        let now = std::time::SystemTime::now();
+
+        let mut buf = [0u8; 66];
+        self.build_udp_packet(&mut buf);
+
+        self.datalink_sender.send_to(&buf, None);
+
+        let hop_ip: String = loop {
+            match process_incoming_packet(&mut self.datalink_receiver, &self.interface) {
+                Ok(ip) => break ip,
+                Err(_) => {
+                    match now.elapsed() {
+                        Ok(t) => {
+                            if t.as_millis() > 500 {
+                                break String::from("*");
+                            }
+                        }
+                        Err(_) => {}
+                    }
+                }
+            }
+        };
+        self.ttl += 1;
+        Ok(TracerouteHop { ttl: self.ttl - 1, rtt: now.elapsed().unwrap_or(Duration::from_millis(0)), addr: hop_ip })
+    }
+
+    /// Create a new UDP packet with current TTL.
+    fn build_udp_packet(&self, buf: &mut [u8]) {
+        let source_ip = self.interface.ips
+            .iter()
+            .filter(|i| i.is_ipv4())
+            .next()
+            .expect("couldn't get interface IP")
+            .ip()
+            .to_string();
+
+        let source_ip = Ipv4Addr::from_str(source_ip.as_str()).expect("malformed source ip");
+        let destination_ip = Ipv4Addr::from_str(self.addr.as_str()).expect("malformed destination ip");
+
+        let mut mut_ethernet_header = MutableEthernetPacket::new(&mut buf[..]).unwrap();
+
+        mut_ethernet_header.set_destination(MacAddr::zero());
+        mut_ethernet_header.set_source(self.interface.mac.expect("couldn't get source MAC"));
+        mut_ethernet_header.set_ethertype(EtherTypes::Ipv4);
+
+        let mut ip_header = MutableIpv4Packet::new(mut_ethernet_header.payload_mut()).unwrap();
+
+        ip_header.set_version(4);
+        ip_header.set_header_length(5);
+        ip_header.set_total_length(52);
+        ip_header.set_ttl(self.ttl);
+        ip_header.set_next_level_protocol(IpNextHeaderProtocols::Udp);
+        ip_header.set_source(source_ip);
+        ip_header.set_destination(destination_ip);
+        ip_header.set_checksum(pnet::packet::ipv4::checksum(&ip_header.to_immutable()));
+
+        let mut udp_header = MutableUdpPacket::new(ip_header.payload_mut()).unwrap();
+
+        udp_header.set_source(self.port);
+        udp_header.set_destination(self.port);
+        udp_header.set_length(32 as u16);
+        udp_header.set_payload(&[0; 24]);
+        udp_header.set_checksum(pnet::packet::udp::ipv4_checksum(&udp_header.to_immutable(),
+                                                                 &source_ip, &destination_ip));
+    }
 }
+
 
 // TODO: add checks for ICMP code icmp[1] = 0 and icmp[1] = 3
 /// Processes ICMP packets. Returns addresses of packets that conform to the following
@@ -189,19 +234,32 @@ fn process_incoming_packet(rx: &mut Box<dyn DataLinkReceiver>,
     }
 }
 
-// TODO: find a more reliable way of detecting the default interface
-// TODO: accept users specified interface
-// NOTE: current implementation doesn't work on Windows
-/// Returns the first interface that is up, loopback and has an IP address associated with it.
-fn get_default_interface() -> Result<NetworkInterface, &'static str> {
-    let interfaces = pnet::datalink::interfaces();
-    let interface = interfaces
-        .iter()
-        .filter(|e| e.is_up() && !e.is_loopback() && e.ips.len() > 0)
-        .next();
+/// Returns the list of interfaces that are up, not loopback and have an IPv4 address
+/// and non-zero MAC address associated with them.
+fn get_available_interfaces() -> Result<Vec<NetworkInterface>, &'static str> {
+    let all_interfaces = pnet::datalink::interfaces();
 
-    match interface {
-        Some(i) => Ok(i.clone()),
-        None => Err("libtraceroute: couldn't find default interface")
-    }
+    let available_interfaces: Vec<NetworkInterface>;
+
+    available_interfaces = if cfg!(target_family = "windows") {
+        all_interfaces
+            .into_iter()
+            .filter(|e| e.mac.is_some()
+                && e.mac.unwrap() != MacAddr::zero()
+                && e.ips
+                    .iter()
+                    .filter(|ip| ip.ip().to_string() != "0.0.0.0")
+                    .next().is_some())
+            .collect()
+    } else {
+        all_interfaces
+            .into_iter()
+            .filter(|e| e.is_up()
+                && !e.is_loopback()
+                && e.ips.iter().filter(|ip| ip.is_ipv4()).next().is_some()
+                && e.mac.is_some()
+                && e.mac.unwrap() != MacAddr::zero())
+            .collect()
+    };
+    Ok(available_interfaces)
 }
