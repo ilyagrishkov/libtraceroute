@@ -56,7 +56,7 @@ impl Iterator for TracerouteQuery {
         let hop = self.get_next_hop();
         match hop {
             Ok(h) => {
-                self.done = h.addr == self.addr;
+                self.done = h.addr == self.addr || self.ttl > self.max_hops as u8;
                 Some(h)
             }
             Err(_) => None
@@ -67,8 +67,11 @@ impl Iterator for TracerouteQuery {
 impl TracerouteQuery {
     /// Creates new instance of TracerouteQuery.
     pub fn new(addr: String, port: u16, max_hops: u32) -> Self {
-        let default_interface = get_default_interface()
-            .expect("couldn't find default interface");
+        let available_interfaces = get_available_interfaces()
+            .expect("couldn't get available interfaces");
+
+        let default_interface = available_interfaces.get(0)
+            .expect("couldn't get default interface").clone();
 
         let (tx, rx) = match channel(&default_interface, Default::default()) {
             Ok(pnet::datalink::Channel::Ethernet(tx, rx)) => (tx, rx),
@@ -88,35 +91,6 @@ impl TracerouteQuery {
         }
     }
 
-    // TODO: find a cleaner and more reliable way of timeout.
-    /// Get next hop on the route. Increases TTL.
-    pub fn get_next_hop(&mut self) -> Result<TracerouteHop, &'static str> {
-        let now = std::time::SystemTime::now();
-
-        let mut buf = [0u8; 42];
-        self.build_udp_packet(&mut buf);
-
-        self.datalink_sender.send_to(&buf, None);
-
-        let hop_ip: String = loop {
-            match process_incoming_packet(&mut self.datalink_receiver, &self.interface) {
-                Ok(ip) => break ip,
-                Err(_) => {
-                    match now.elapsed() {
-                        Ok(t) => {
-                            if t.as_secs() > 2 {
-                                break String::from("*");
-                            }
-                        }
-                        Err(_) => {}
-                    }
-                }
-            }
-        };
-        self.ttl += 1;
-        Ok(TracerouteHop { ttl: self.ttl - 1, rtt: Duration::from_millis(10), addr: hop_ip })
-    }
-
     /// Returns a vector of traceroute hops.
     pub fn perform_traceroute(&mut self) -> Vec<TracerouteHop> {
         let mut hops = Vec::<TracerouteHop>::new();
@@ -130,6 +104,35 @@ impl TracerouteQuery {
             }
         }
         return hops;
+    }
+
+    // TODO: find a cleaner and more reliable way of timeout.
+    /// Get next hop on the route. Increases TTL.
+    fn get_next_hop(&mut self) -> Result<TracerouteHop, &'static str> {
+        let now = std::time::SystemTime::now();
+
+        let mut buf = [0u8; 66];
+        self.build_udp_packet(&mut buf);
+
+        self.datalink_sender.send_to(&buf, None);
+
+        let hop_ip: String = loop {
+            match process_incoming_packet(&mut self.datalink_receiver, &self.interface) {
+                Ok(ip) => break ip,
+                Err(_) => {
+                    match now.elapsed() {
+                        Ok(t) => {
+                            if t.as_millis() > 500 {
+                                break String::from("*");
+                            }
+                        }
+                        Err(_) => {}
+                    }
+                }
+            }
+        };
+        self.ttl += 1;
+        Ok(TracerouteHop { ttl: self.ttl - 1, rtt: now.elapsed().unwrap_or(Duration::from_millis(0)), addr: hop_ip })
     }
 
     /// Create a new UDP packet with current TTL.
@@ -155,7 +158,7 @@ impl TracerouteQuery {
 
         ip_header.set_version(4);
         ip_header.set_header_length(5);
-        ip_header.set_total_length(28);
+        ip_header.set_total_length(52);
         ip_header.set_ttl(self.ttl);
         ip_header.set_next_level_protocol(IpNextHeaderProtocols::Udp);
         ip_header.set_source(source_ip);
@@ -166,7 +169,8 @@ impl TracerouteQuery {
 
         udp_header.set_source(self.port);
         udp_header.set_destination(self.port);
-        udp_header.set_length(8 as u16);
+        udp_header.set_length(32 as u16);
+        udp_header.set_payload(&[0; 24]);
         udp_header.set_checksum(pnet::packet::udp::ipv4_checksum(&udp_header.to_immutable(),
                                                                  &source_ip, &destination_ip));
     }
@@ -230,29 +234,32 @@ fn process_incoming_packet(rx: &mut Box<dyn DataLinkReceiver>,
     }
 }
 
-// TODO: find a more reliable way of detecting the default interface
-// TODO: accept users specified interface
-// NOTE: current implementation doesn't work on Windows
-/// Returns the first interface that is up, loopback and has an IP address associated with it.
-fn get_default_interface() -> Result<NetworkInterface, &'static str> {
-    let interfaces = pnet::datalink::interfaces();
+/// Returns the list of interfaces that are up, not loopback and have an IPv4 address
+/// and non-zero MAC address associated with them.
+fn get_available_interfaces() -> Result<Vec<NetworkInterface>, &'static str> {
+    let all_interfaces = pnet::datalink::interfaces();
 
-    let interface;
+    let available_interfaces: Vec<NetworkInterface>;
 
-    interface = if cfg!(target_family = "windows") {
-        interfaces
-            .iter()
-            .filter(|e| e.mac.is_some() && e.ips.iter().filter(|ip| ip.ip().to_string() != "0.0.0.0").next().is_some())
-            .next()
+    available_interfaces = if cfg!(target_family = "windows") {
+        all_interfaces
+            .into_iter()
+            .filter(|e| e.mac.is_some()
+                && e.mac.unwrap() != MacAddr::zero()
+                && e.ips
+                    .iter()
+                    .filter(|ip| ip.ip().to_string() != "0.0.0.0")
+                    .next().is_some())
+            .collect()
     } else {
-        interfaces
-            .iter()
-            .filter(|e| e.is_up() && !e.is_loopback() && e.ips.len() > 0 && e.mac.is_some())
-            .next()
+        all_interfaces
+            .into_iter()
+            .filter(|e| e.is_up()
+                && !e.is_loopback()
+                && e.ips.iter().filter(|ip| ip.is_ipv4()).next().is_some()
+                && e.mac.is_some()
+                && e.mac.unwrap() != MacAddr::zero())
+            .collect()
     };
-
-    match interface {
-        Some(i) => Ok(i.clone()),
-        None => Err("libtraceroute: couldn't find default interface")
-    }
+    Ok(available_interfaces)
 }

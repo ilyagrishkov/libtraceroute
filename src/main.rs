@@ -20,13 +20,13 @@ use libtraceroute::TracerouteQuery;
 
 // NOTE: this crate is supposed to be a library. Main exists temporarily for testing purposes only
 fn main() {
-    let addr = "172.217.20.46";
+    let addr = "93.184.216.34";
     let port = 33434;
     let max_hops = 30;
 
     let query = TracerouteQuery::new(String::from(addr), port, max_hops);
 
     for hop in query {
-        println!("{} - {}", hop.ttl, hop.addr);
+        println!("{} \t {}ms \t {}", hop.ttl, hop.rtt.as_millis(), hop.addr);
     }
 }
