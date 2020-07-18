@@ -77,18 +77,11 @@ impl Iterator for Traceroute {
 
 impl Traceroute {
     /// Creates new instance of TracerouteQuery.
-    pub fn new(addr: &str, port: Option<u16>, max_hops: Option<u32>, number_of_queries: Option<u32>,
-               interface: Option<&str>, first_ttl: Option<u8>) -> Self {
+    pub fn new(addr: &str) -> Self {
         let available_interfaces = get_available_interfaces()
             .expect("couldn't get available interfaces");
 
-        let default_interface = match interface {
-            Some(i) => match available_interfaces.get(i) {
-                Some(i) => i.clone(),
-                None => panic!("no such interface available")
-            },
-            None => available_interfaces.iter().next().expect("no interfaces available").1.clone()
-        };
+        let default_interface = available_interfaces.iter().next().expect("no interfaces available").1.clone();
 
         let (tx, rx) = match channel(&default_interface, Default::default()) {
             Ok(pnet::datalink::Channel::Ethernet(tx, rx)) => (tx, rx),
@@ -98,16 +91,53 @@ impl Traceroute {
 
         Traceroute {
             addr: String::from(addr),
-            port: port.unwrap_or(33434),
-            max_hops: max_hops.unwrap_or(30),
-            number_of_queries: number_of_queries.unwrap_or(3),
+            port: 33434,
+            max_hops: 30,
+            number_of_queries: 3,
             interface: default_interface,
-            ttl: first_ttl.unwrap_or(1),
+            ttl: 1,
             datalink_receiver: rx,
             datalink_sender: tx,
             done: false,
             seq: 0,
         }
+    }
+
+    /// Builder: Port for traceroute. Will be incremented on every query.
+    pub fn with_port(mut self, port: u16) -> Self {
+        self.port = port;
+        self
+    }
+
+    /// Builder: Maximum number of hops.
+    pub fn with_max_hops(mut self, max_hops: u32) -> Self {
+        self.max_hops = max_hops;
+        self
+    }
+
+    /// Builder: Number of queries to run per hop.
+    pub fn with_number_of_queries(mut self, number_of_queries: u32) -> Self {
+        self.number_of_queries = number_of_queries;
+        self
+    }
+
+    /// Builder: Interface to send packets from.
+    pub fn with_interface(mut self, interface: &str) -> Self {
+        let available_interfaces = get_available_interfaces()
+            .expect("couldn't get available interfaces");
+
+        let default_interface = match available_interfaces.get(interface) {
+            Some(i) => i.clone(),
+            None => panic!("no such interface available")
+        };
+        self.interface = default_interface;
+        self
+    }
+
+    /// Builder: First TTL to record.
+    pub fn with_first_ttl(mut self, first_ttl: u8) -> Self {
+        self.ttl = first_ttl;
+        self
     }
 
     /// Returns a vector of traceroute hops.
