@@ -24,7 +24,7 @@ fn main() {
     let port = 33434;
     let max_hops = 30;
 
-    let query = Traceroute::new(String::from(addr), port, max_hops, 3);
+    let query = Traceroute::new(addr, Some(port), Some(max_hops), None, None, None);
 
     for hop in query {
         print!("{}", hop.ttl);

@@ -28,6 +28,7 @@ use std::time::Duration;
 use pnet::util::MacAddr;
 use std::str::FromStr;
 use rand::Rng;
+use std::collections::HashMap;
 
 pub struct Traceroute {
     addr: String,
@@ -76,12 +77,18 @@ impl Iterator for Traceroute {
 
 impl Traceroute {
     /// Creates new instance of TracerouteQuery.
-    pub fn new(addr: String, port: u16, max_hops: u32, number_of_queries: u32) -> Self {
+    pub fn new(addr: &str, port: Option<u16>, max_hops: Option<u32>, number_of_queries: Option<u32>,
+               interface: Option<&str>, first_ttl: Option<u8>) -> Self {
         let available_interfaces = get_available_interfaces()
             .expect("couldn't get available interfaces");
 
-        let default_interface = available_interfaces.get(0)
-            .expect("couldn't get default interface").clone();
+        let default_interface = match interface {
+            Some(i) => match available_interfaces.get(i) {
+                Some(i) => i.clone(),
+                None => panic!("no such interface available")
+            },
+            None => available_interfaces.iter().next().expect("no interfaces available").1.clone()
+        };
 
         let (tx, rx) = match channel(&default_interface, Default::default()) {
             Ok(pnet::datalink::Channel::Ethernet(tx, rx)) => (tx, rx),
@@ -90,12 +97,12 @@ impl Traceroute {
         };
 
         Traceroute {
-            addr,
-            port,
-            max_hops,
-            number_of_queries,
+            addr: String::from(addr),
+            port: port.unwrap_or(33434),
+            max_hops: max_hops.unwrap_or(30),
+            number_of_queries: number_of_queries.unwrap_or(3),
             interface: default_interface,
-            ttl: 1,
+            ttl: first_ttl.unwrap_or(1),
             datalink_receiver: rx,
             datalink_sender: tx,
             done: false,
@@ -271,12 +278,12 @@ fn process_incoming_packet(rx: &mut Box<dyn DataLinkReceiver>,
 
 /// Returns the list of interfaces that are up, not loopback and have an IPv4 address
 /// and non-zero MAC address associated with them.
-fn get_available_interfaces() -> Result<Vec<NetworkInterface>, &'static str> {
+fn get_available_interfaces() -> Result<HashMap<String, NetworkInterface>, &'static str> {
     let all_interfaces = pnet::datalink::interfaces();
 
-    let available_interfaces: Vec<NetworkInterface>;
+    let supported_interfaces: Vec<NetworkInterface>;
 
-    available_interfaces = if cfg!(target_family = "windows") {
+    supported_interfaces = if cfg!(target_family = "windows") {
         all_interfaces
             .into_iter()
             .filter(|e| e.mac.is_some()
@@ -296,5 +303,10 @@ fn get_available_interfaces() -> Result<Vec<NetworkInterface>, &'static str> {
                 && e.mac.unwrap() != MacAddr::zero())
             .collect()
     };
+
+    let mut available_interfaces = HashMap::<String, NetworkInterface>::new();
+    for interface in supported_interfaces {
+        available_interfaces.insert(interface.name.clone(), interface);
+    }
     Ok(available_interfaces)
 }
