@@ -16,17 +16,20 @@
 
 extern crate libtraceroute;
 
-use libtraceroute::TracerouteQuery;
+use libtraceroute::Traceroute;
 
 // NOTE: this crate is supposed to be a library. Main exists temporarily for testing purposes only
 fn main() {
-    let addr = "93.184.216.34";
+    let addr = "216.58.207.206";
     let port = 33434;
     let max_hops = 30;
 
-    let query = TracerouteQuery::new(String::from(addr), port, max_hops);
+    let query = Traceroute::new(String::from(addr), port, max_hops, 3);
 
     for hop in query {
-        println!("{} \t {}ms \t {}", hop.ttl, hop.rtt.as_millis(), hop.addr);
+        print!("{}", hop.ttl);
+        for query_result in &hop.query_result {
+            print!(" \t{}ms \t{}\n", query_result.rtt.as_millis(), query_result.addr);
+        }
     }
 }

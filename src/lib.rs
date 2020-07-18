@@ -27,25 +27,32 @@ use std::net::{IpAddr, Ipv4Addr};
 use std::time::Duration;
 use pnet::util::MacAddr;
 use std::str::FromStr;
+use rand::Rng;
 
-pub struct TracerouteQuery {
+pub struct Traceroute {
     addr: String,
     port: u16,
     max_hops: u32,
+    number_of_queries: u32,
     interface: NetworkInterface,
     ttl: u8,
     datalink_receiver: Box<dyn DataLinkReceiver>,
     datalink_sender: Box<dyn DataLinkSender>,
     done: bool,
+    seq: u16,
 }
 
 pub struct TracerouteHop {
     pub ttl: u8,
+    pub query_result: Vec<TracerouteQueryResult>,
+}
+
+pub struct TracerouteQueryResult {
     pub rtt: Duration,
     pub addr: String,
 }
 
-impl Iterator for TracerouteQuery {
+impl Iterator for Traceroute {
     type Item = TracerouteHop;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -53,10 +60,13 @@ impl Iterator for TracerouteQuery {
             return None;
         }
 
-        let hop = self.get_next_hop();
+        let hop = self.calculate_next_hop();
         match hop {
             Ok(h) => {
-                self.done = h.addr == self.addr || self.ttl > self.max_hops as u8;
+                self.done = h.query_result.iter()
+                    .filter(|ip| ip.addr == self.addr)
+                    .next().is_some()
+                    || self.ttl > self.max_hops as u8;
                 Some(h)
             }
             Err(_) => None
@@ -64,9 +74,9 @@ impl Iterator for TracerouteQuery {
     }
 }
 
-impl TracerouteQuery {
+impl Traceroute {
     /// Creates new instance of TracerouteQuery.
-    pub fn new(addr: String, port: u16, max_hops: u32) -> Self {
+    pub fn new(addr: String, port: u16, max_hops: u32, number_of_queries: u32) -> Self {
         let available_interfaces = get_available_interfaces()
             .expect("couldn't get available interfaces");
 
@@ -79,15 +89,17 @@ impl TracerouteQuery {
             Err(e) => panic!("libtraceroute: unable to create channel: {}", e),
         };
 
-        TracerouteQuery {
+        Traceroute {
             addr,
             port,
             max_hops,
+            number_of_queries,
             interface: default_interface,
             ttl: 1,
             datalink_receiver: rx,
             datalink_sender: tx,
             done: false,
+            seq: 0,
         }
     }
 
@@ -106,13 +118,34 @@ impl TracerouteQuery {
         return hops;
     }
 
-    // TODO: find a cleaner and more reliable way of timeout.
     /// Get next hop on the route. Increases TTL.
-    fn get_next_hop(&mut self) -> Result<TracerouteHop, &'static str> {
+    fn calculate_next_hop(&mut self) -> Result<TracerouteHop, &'static str> {
+        let mut query_results = Vec::<TracerouteQueryResult>::new();
+        for _ in 0..self.number_of_queries {
+            match self.get_next_query_result() {
+                Ok(v) => {
+                    if query_results.iter()
+                        .filter(|query_result| query_result.addr == v.addr)
+                        .next().is_none() {
+                        query_results.push(v)
+                    }
+                }
+                Err(_) => query_results.push(TracerouteQueryResult { rtt: Duration::from_millis(0), addr: String::from("*") })
+            }
+        }
+        self.ttl += 1;
+        Ok(TracerouteHop { ttl: self.ttl - 1, query_result: query_results })
+    }
+
+    // TODO: find a cleaner and more reliable way of timeout.
+    /// Runs a query to the destination and returns RTT and IP of the router where
+    /// time-to-live-exceeded. Doesn't increase TTL.
+    fn get_next_query_result(&mut self) -> Result<TracerouteQueryResult, &'static str> {
         let now = std::time::SystemTime::now();
 
         let mut buf = [0u8; 66];
         self.build_udp_packet(&mut buf);
+        self.seq += 1;
 
         self.datalink_sender.send_to(&buf, None);
 
@@ -131,8 +164,10 @@ impl TracerouteQuery {
                 }
             }
         };
-        self.ttl += 1;
-        Ok(TracerouteHop { ttl: self.ttl - 1, rtt: now.elapsed().unwrap_or(Duration::from_millis(0)), addr: hop_ip })
+        Ok(TracerouteQueryResult {
+            rtt: now.elapsed().unwrap_or(Duration::from_millis(0)),
+            addr: hop_ip,
+        })
     }
 
     /// Create a new UDP packet with current TTL.
@@ -167,8 +202,8 @@ impl TracerouteQuery {
 
         let mut udp_header = MutableUdpPacket::new(ip_header.payload_mut()).unwrap();
 
-        udp_header.set_source(self.port);
-        udp_header.set_destination(self.port);
+        udp_header.set_source(rand::thread_rng().gen_range(49152, 65535));
+        udp_header.set_destination(self.port + self.seq);
         udp_header.set_length(32 as u16);
         udp_header.set_payload(&[0; 24]);
         udp_header.set_checksum(pnet::packet::udp::ipv4_checksum(&udp_header.to_immutable(),
@@ -247,9 +282,9 @@ fn get_available_interfaces() -> Result<Vec<NetworkInterface>, &'static str> {
             .filter(|e| e.mac.is_some()
                 && e.mac.unwrap() != MacAddr::zero()
                 && e.ips
-                    .iter()
-                    .filter(|ip| ip.ip().to_string() != "0.0.0.0")
-                    .next().is_some())
+                .iter()
+                .filter(|ip| ip.ip().to_string() != "0.0.0.0")
+                .next().is_some())
             .collect()
     } else {
         all_interfaces
