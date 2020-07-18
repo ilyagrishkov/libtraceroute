@@ -39,8 +39,7 @@ pub(crate) struct Channel {
 
 impl Default for Channel {
     fn default() -> Self {
-        let available_interfaces = get_available_interfaces()
-            .expect("couldn't get available interfaces");
+        let available_interfaces = get_available_interfaces();
 
         let default_interface = available_interfaces
             .iter()
@@ -94,7 +93,7 @@ impl Channel {
                     match now.elapsed() {
                         Ok(t) => {
                             if t.as_millis() > 500 {
-                                return String::from("*")
+                                return String::from("*");
                             }
                         }
                         Err(_) => return String::from("*")
@@ -153,7 +152,7 @@ impl Channel {
 
 /// Returns the list of interfaces that are up, not loopback and have an IPv4 address
 /// and non-zero MAC address associated with them.
-pub fn get_available_interfaces() -> Result<Vec<NetworkInterface>, &'static str> {
+pub fn get_available_interfaces() -> Vec<NetworkInterface> {
     let all_interfaces = pnet::datalink::interfaces();
 
     let available_interfaces: Vec<NetworkInterface>;
@@ -179,7 +178,7 @@ pub fn get_available_interfaces() -> Result<Vec<NetworkInterface>, &'static str>
             .collect()
     };
 
-    Ok(available_interfaces)
+    available_interfaces
 }
 
 

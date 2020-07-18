@@ -51,16 +51,11 @@ impl Iterator for Traceroute {
         }
 
         let hop = self.calculate_next_hop();
-        match hop {
-            Ok(h) => {
-                self.done = h.query_result.iter()
-                    .filter(|ip| ip.addr == self.addr)
-                    .next().is_some()
-                    || self.ttl > self.max_hops as u8;
-                Some(h)
-            }
-            Err(_) => None
-        }
+        self.done = hop.query_result.iter()
+            .filter(|ip| ip.addr == self.addr)
+            .next().is_some()
+            || self.ttl > self.max_hops as u8;
+        Some(hop)
     }
 }
 
@@ -98,8 +93,7 @@ impl Traceroute {
 
     /// Builder: Interface to send packets from.
     pub fn with_interface(mut self, interface: &str) -> Self {
-        let available_interfaces = util::get_available_interfaces()
-            .expect("couldn't get available interfaces");
+        let available_interfaces = util::get_available_interfaces();
 
         let default_interface = match available_interfaces.iter().filter(|i| i.name == interface).next() {
             Some(i) => i.clone(),
@@ -132,36 +126,32 @@ impl Traceroute {
     }
 
     /// Get next hop on the route. Increases TTL.
-    fn calculate_next_hop(&mut self) -> Result<TracerouteHop, &'static str> {
+    fn calculate_next_hop(&mut self) -> TracerouteHop {
         let mut query_results = Vec::<TracerouteQueryResult>::new();
         for _ in 0..self.number_of_queries {
-            match self.get_next_query_result() {
-                Ok(v) => {
-                    if query_results.iter()
-                        .filter(|query_result| query_result.addr == v.addr)
-                        .next().is_none() {
-                        query_results.push(v)
-                    }
-                }
-                Err(_) => query_results.push(TracerouteQueryResult { rtt: Duration::from_millis(0), addr: String::from("*") })
+            let result = self.get_next_query_result();
+            if query_results.iter()
+                .filter(|query_result| query_result.addr == result.addr)
+                .next().is_none() {
+                query_results.push(result)
             }
         }
         self.ttl += 1;
-        Ok(TracerouteHop { ttl: self.ttl - 1, query_result: query_results })
+        TracerouteHop { ttl: self.ttl - 1, query_result: query_results }
     }
-    
+
     /// Runs a query to the destination and returns RTT and IP of the router where
     /// time-to-live-exceeded. Doesn't increase TTL.
-    fn get_next_query_result(&mut self) -> Result<TracerouteQueryResult, &'static str> {
+    fn get_next_query_result(&mut self) -> TracerouteQueryResult {
         let now = std::time::SystemTime::now();
 
         let buf = self.channel.build_udp_packet(Ipv4Addr::from_str(self.addr.as_str()).expect("malformed destination ip"), self.ttl, self.port);
 
         self.channel.send(&buf);
         let hop_ip = self.channel.recv();
-        Ok(TracerouteQueryResult {
+        TracerouteQueryResult {
             rtt: now.elapsed().unwrap_or(Duration::from_millis(0)),
             addr: hop_ip,
-        })
+        }
     }
 }
