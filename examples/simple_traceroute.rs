@@ -14,19 +14,15 @@
    limitations under the License.
 */
 
-extern crate libtraceroute;
-
 use libtraceroute::Traceroute;
 
-// NOTE: this crate is supposed to be a library. Main exists temporarily for testing purposes only
 fn main() {
-    let addr = "216.58.207.206";
-    let port = 33434;
-    let max_hops = 30;
+    let destination_ip = "93.184.216.34"; // example.com
 
-    let query = Traceroute::new(addr).with_max_hops(max_hops).with_port(port);
+    let traceroute_query = Traceroute::new(destination_ip);
 
-    for hop in query {
+    // Traceroute implements Iterator
+    for hop in traceroute_query {
         print!("{}", hop.ttl);
         for query_result in &hop.query_result {
             print!(" \t{}ms \t{}\n", query_result.rtt.as_millis(), query_result.addr);
