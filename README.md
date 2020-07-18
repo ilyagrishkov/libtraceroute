@@ -21,8 +21,8 @@
 ## <div align="center"> FEATURES </div>
 **Libtraceroute** works at the data link layer with custom-built packets, which provides the user with a lot of options for customizations. The library allows to configure the following parameters:  
 - **_[REQUIRED]_** - Destination address    
-- **_[OPTIONAL]_** -  Maximum number of hops &emsp; Port &emsp;  
-- **_[WIP]_** - Number of queries per hop &emsp; Timeout per query &emsp; Network interface &emsp; Protocol
+- **_[OPTIONAL]_** - Maximum number of hops &emsp; Port &emsp; Number of queries per hop &emsp; Network interface &emsp;
+- **_[WIP]_** - Timeout per query &emsp; Protocol
 
 <br/><br/>
 
