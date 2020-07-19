@@ -184,6 +184,7 @@ fn handle_icmp_packet(source: IpAddr, packet: &[u8]) -> Result<String, &'static 
 
     match icmp_packet.get_icmp_type() {
         IcmpTypes::TimeExceeded => Ok(source.to_string()),
+        IcmpTypes::EchoReply => Ok(source.to_string()),
         IcmpTypes::DestinationUnreachable => Ok(source.to_string()),
         _ => Err("wrong packet")
     }
