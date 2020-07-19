@@ -24,11 +24,15 @@ use std::str::FromStr;
 
 pub struct Traceroute {
     addr: String,
+    config: Config,
+    done: bool,
+}
+
+pub struct Config {
     port: u16,
     max_hops: u32,
     number_of_queries: u32,
     ttl: u8,
-    done: bool,
     channel: util::Channel,
 }
 
@@ -42,37 +46,13 @@ pub struct TracerouteQueryResult {
     pub addr: String,
 }
 
-impl Iterator for Traceroute {
-    type Item = TracerouteHop;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.done {
-            return None;
-        }
-
-        let hop = self.calculate_next_hop();
-        self.done = hop.query_result.iter()
-            .filter(|ip| ip.addr == self.addr)
-            .next().is_some()
-            || self.ttl > self.max_hops as u8;
-        Some(hop)
+impl Default for Config {
+    fn default() -> Self {
+        Config {port: 33434, max_hops: 30, number_of_queries: 3, ttl: 1, channel: Default::default()}
     }
 }
 
-impl Traceroute {
-    /// Creates new instance of TracerouteQuery.
-    pub fn new(addr: &str) -> Self {
-        Traceroute {
-            addr: String::from(addr),
-            port: 33434,
-            max_hops: 30,
-            number_of_queries: 3,
-            ttl: 1,
-            done: false,
-            channel: Default::default(),
-        }
-    }
-
+impl Config {
     /// Builder: Port for traceroute. Will be incremented on every query.
     pub fn with_port(mut self, port: u16) -> Self {
         self.port = port;
@@ -109,11 +89,39 @@ impl Traceroute {
         self.ttl = first_ttl;
         self
     }
+}
+
+impl Iterator for Traceroute {
+    type Item = TracerouteHop;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.done {
+            return None;
+        }
+
+        let hop = self.calculate_next_hop();
+        self.done = hop.query_result.iter()
+            .filter(|ip| ip.addr == self.addr)
+            .next().is_some()
+            || self.config.ttl > self.config.max_hops as u8;
+        Some(hop)
+    }
+}
+
+impl Traceroute {
+    /// Creates new instance of TracerouteQuery.
+    pub fn new(addr: &str, config: Config) -> Self {
+        Traceroute {
+            addr: String::from(addr),
+            config,
+            done: false,
+        }
+    }
 
     /// Returns a vector of traceroute hops.
     pub fn perform_traceroute(&mut self) -> Vec<TracerouteHop> {
         let mut hops = Vec::<TracerouteHop>::new();
-        for _ in 1..self.max_hops {
+        for _ in 1..self.config.max_hops {
             if self.done {
                 return hops;
             }
@@ -128,7 +136,7 @@ impl Traceroute {
     /// Get next hop on the route. Increases TTL.
     fn calculate_next_hop(&mut self) -> TracerouteHop {
         let mut query_results = Vec::<TracerouteQueryResult>::new();
-        for _ in 0..self.number_of_queries {
+        for _ in 0..self.config.number_of_queries {
             let result = self.get_next_query_result();
             if query_results.iter()
                 .filter(|query_result| query_result.addr == result.addr)
@@ -136,8 +144,8 @@ impl Traceroute {
                 query_results.push(result)
             }
         }
-        self.ttl += 1;
-        TracerouteHop { ttl: self.ttl - 1, query_result: query_results }
+        self.config.ttl += 1;
+        TracerouteHop { ttl: self.config.ttl - 1, query_result: query_results }
     }
 
     /// Runs a query to the destination and returns RTT and IP of the router where
@@ -145,10 +153,10 @@ impl Traceroute {
     fn get_next_query_result(&mut self) -> TracerouteQueryResult {
         let now = std::time::SystemTime::now();
 
-        let buf = self.channel.build_udp_packet(Ipv4Addr::from_str(self.addr.as_str()).expect("malformed destination ip"), self.ttl, self.port);
+        let buf = self.config.channel.build_udp_packet(Ipv4Addr::from_str(self.addr.as_str()).expect("malformed destination ip"), self.config.ttl, self.config.port);
 
-        self.channel.send(&buf);
-        let hop_ip = self.channel.recv();
+        self.config.channel.send(&buf);
+        let hop_ip = self.config.channel.recv();
         TracerouteQueryResult {
             rtt: now.elapsed().unwrap_or(Duration::from_millis(0)),
             addr: hop_ip,

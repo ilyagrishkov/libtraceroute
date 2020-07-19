@@ -19,7 +19,7 @@ use libtraceroute::Traceroute;
 fn main() {
     let destination_ip = "93.184.216.34"; // example.com
 
-    let traceroute_query = Traceroute::new(destination_ip);
+    let traceroute_query = Traceroute::new(destination_ip, Default::default());
 
     // Traceroute implements Iterator
     for hop in traceroute_query {

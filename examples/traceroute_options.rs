@@ -14,17 +14,17 @@
    limitations under the License.
 */
 
-use libtraceroute::Traceroute;
+use libtraceroute::{Traceroute, Config};
 
 fn main() {
     let destination_ip = "93.184.216.34";  // example.com
 
-    let mut traceroute_query = Traceroute::new(destination_ip)
+    let mut traceroute_query = Traceroute::new(destination_ip, Config::default()
         .with_port(33480)
         .with_max_hops(20)
         .with_first_ttl(2)
         .with_interface("en0")
-        .with_number_of_queries(2);
+        .with_number_of_queries(2));
 
     // Calculate all hops upfront
     let traceroute_result = traceroute_query.perform_traceroute();
