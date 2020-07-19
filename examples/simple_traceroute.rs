@@ -15,9 +15,10 @@
 */
 
 use libtraceroute::Traceroute;
+use std::net::Ipv4Addr;
 
 fn main() {
-    let destination_ip = "93.184.216.34"; // example.com
+    let destination_ip = Ipv4Addr::new(93, 184, 216, 34);  // example.com
 
     let traceroute_query = Traceroute::new(destination_ip, Default::default());
 

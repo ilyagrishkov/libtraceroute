@@ -20,10 +20,10 @@ pub mod util;
 
 use std::net::Ipv4Addr;
 use std::time::Duration;
-use std::str::FromStr;
+use crate::util::Protocol;
 
 pub struct Traceroute {
-    addr: String,
+    addr: Ipv4Addr,
     config: Config,
     done: bool,
 }
@@ -71,6 +71,12 @@ impl Config {
         self
     }
 
+    /// Builder: Protocol. Supported: UDP; WIP:(TCP, ICMP)
+    pub fn with_protocol(mut self, protocol: Protocol) -> Self {
+        self.channel.change_protocol(protocol);
+        self
+    }
+
     /// Builder: Interface to send packets from.
     pub fn with_interface(mut self, interface: &str) -> Self {
         let available_interfaces = util::get_available_interfaces();
@@ -80,7 +86,7 @@ impl Config {
             None => panic!("no such interface available")
         };
 
-        self.channel = util::Channel::new(&default_interface);
+        self.channel = util::Channel::new(&default_interface, self.port, self.ttl);
         self
     }
 
@@ -101,7 +107,7 @@ impl Iterator for Traceroute {
 
         let hop = self.calculate_next_hop();
         self.done = hop.query_result.iter()
-            .filter(|ip| ip.addr == self.addr)
+            .filter(|ip| ip.addr == self.addr.to_string())
             .next().is_some()
             || self.config.ttl > self.config.max_hops as u8;
         Some(hop)
@@ -110,9 +116,9 @@ impl Iterator for Traceroute {
 
 impl Traceroute {
     /// Creates new instance of TracerouteQuery.
-    pub fn new(addr: &str, config: Config) -> Self {
+    pub fn new(addr: Ipv4Addr, config: Config) -> Self {
         Traceroute {
-            addr: String::from(addr),
+            addr,
             config,
             done: false,
         }
@@ -144,8 +150,7 @@ impl Traceroute {
                 query_results.push(result)
             }
         }
-        self.config.ttl += 1;
-        TracerouteHop { ttl: self.config.ttl - 1, query_result: query_results }
+        TracerouteHop { ttl: self.config.channel.increment_ttl(), query_result: query_results }
     }
 
     /// Runs a query to the destination and returns RTT and IP of the router where
@@ -153,9 +158,7 @@ impl Traceroute {
     fn get_next_query_result(&mut self) -> TracerouteQueryResult {
         let now = std::time::SystemTime::now();
 
-        let buf = self.config.channel.build_udp_packet(Ipv4Addr::from_str(self.addr.as_str()).expect("malformed destination ip"), self.config.ttl, self.config.port);
-
-        self.config.channel.send(&buf);
+        self.config.channel.send_to(self.addr);
         let hop_ip = self.config.channel.recv();
         TracerouteQueryResult {
             rtt: now.elapsed().unwrap_or(Duration::from_millis(0)),

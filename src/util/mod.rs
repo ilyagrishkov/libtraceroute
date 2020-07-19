@@ -16,24 +16,31 @@
 
 extern crate pnet;
 
+pub(crate) mod packet_builder;
+
 use pnet::datalink::{NetworkInterface, MacAddr, DataLinkSender, DataLinkReceiver};
-use pnet::packet::ethernet::{EtherTypes, EthernetPacket, MutableEthernetPacket};
+use pnet::packet::ethernet::{EtherTypes, EthernetPacket};
 use pnet::packet::icmp::{IcmpPacket, IcmpTypes};
 use pnet::packet::ip::IpNextHeaderProtocols;
-use pnet::packet::ipv4::{Ipv4Packet, MutableIpv4Packet};
-use pnet::packet::udp::MutableUdpPacket;
-use pnet::packet::{Packet, MutablePacket};
+use pnet::packet::ipv4::Ipv4Packet;
+use pnet::packet::Packet;
 use pnet::datalink::channel;
 use std::net::{IpAddr, Ipv4Addr};
 use std::str::FromStr;
-use rand::Rng;
+
+pub enum Protocol {
+    UDP,
+    TCP,
+    ICMP
+}
 
 pub(crate) struct Channel {
-    pub tx: Box<dyn DataLinkSender>,
-    pub rx: Box<dyn DataLinkReceiver>,
-    source_ip: Ipv4Addr,
-    source_mac: MacAddr,
+    tx: Box<dyn DataLinkSender>,
+    rx: Box<dyn DataLinkReceiver>,
+    packet_builder: packet_builder::PacketBuilder,
     payload_offset: usize,
+    port: u16,
+    ttl: u8,
     seq: u16,
 }
 
@@ -47,12 +54,12 @@ impl Default for Channel {
             .expect("no interfaces available")
             .clone();
 
-        Channel::new(&default_interface)
+        Channel::new(&default_interface, 33434, 1)
     }
 }
 
 impl Channel {
-    pub fn new(network_interface: &NetworkInterface) -> Self {
+    pub fn new(network_interface: &NetworkInterface, port: u16, ttl: u8) -> Self {
         let source_ip = network_interface.ips
             .iter()
             .filter(|i| i.is_ipv4())
@@ -75,12 +82,30 @@ impl Channel {
             Err(e) => panic!("libtraceroute: unable to create util: {}", e),
         };
 
-        Channel { source_ip, source_mac: network_interface.mac.unwrap(), tx, rx, payload_offset, seq: 0 }
+        Channel {
+            tx, rx,
+            packet_builder: packet_builder::PacketBuilder::new(Protocol::UDP, network_interface.mac.unwrap(), source_ip),
+            payload_offset,
+            port, ttl,
+            seq: 0
+        }
+    }
+
+    /// Change protocol of packet_builder.
+    pub(crate) fn change_protocol(&mut self, new_protocol: Protocol) {
+        self.packet_builder.protocol = new_protocol;
+    }
+
+    pub(crate) fn increment_ttl(&mut self) -> u8 {
+        self.ttl += 1;
+        self.ttl - 1
     }
 
     /// Sends packet.
-    pub(crate) fn send(&mut self, buf: &[u8]) {
-        self.tx.send_to(buf, None);
+    pub(crate) fn send_to(&mut self, destination_ip: Ipv4Addr) {
+        let buf = self.packet_builder.build_packet(destination_ip, self.ttl, self.port + self.seq);
+        self.tx.send_to(&buf, None);
+        self.seq += 1;
     }
 
     /// Waits for ICMP time-to-live-exceeded packet.
@@ -101,39 +126,6 @@ impl Channel {
                 }
             }
         }
-    }
-
-    /// Create a new UDP packet with current TTL.
-    pub(crate) fn build_udp_packet(&mut self, destination_ip: Ipv4Addr, ttl: u8, port: u16) -> Vec<u8> {
-        let mut buf = [0u8; 66];
-        let mut mut_ethernet_header = MutableEthernetPacket::new(&mut buf[..]).unwrap();
-
-        mut_ethernet_header.set_destination(MacAddr::zero());
-        mut_ethernet_header.set_source(self.source_mac);
-        mut_ethernet_header.set_ethertype(EtherTypes::Ipv4);
-
-        let mut ip_header = MutableIpv4Packet::new(mut_ethernet_header.payload_mut()).unwrap();
-
-        ip_header.set_version(4);
-        ip_header.set_header_length(5);
-        ip_header.set_total_length(52);
-        ip_header.set_ttl(ttl);
-        ip_header.set_next_level_protocol(IpNextHeaderProtocols::Udp);
-        ip_header.set_source(self.source_ip);
-        ip_header.set_destination(destination_ip);
-        ip_header.set_checksum(pnet::packet::ipv4::checksum(&ip_header.to_immutable()));
-
-        let mut udp_header = MutableUdpPacket::new(ip_header.payload_mut()).unwrap();
-
-        udp_header.set_source(rand::thread_rng().gen_range(49152, 65535));
-        udp_header.set_destination(port + self.seq);
-        udp_header.set_length(32 as u16);
-        udp_header.set_payload(&[0; 24]);
-        udp_header.set_checksum(pnet::packet::udp::ipv4_checksum(&udp_header.to_immutable(),
-                                                                 &self.source_ip, &destination_ip));
-
-        self.seq += 1;
-        buf.to_vec()
     }
 
     /// Start capturing packets until until expected ICMP packet was received.

@@ -15,16 +15,19 @@
 */
 
 use libtraceroute::{Traceroute, Config};
+use libtraceroute::util::Protocol::UDP;
+use std::net::Ipv4Addr;
 
 fn main() {
-    let destination_ip = "93.184.216.34";  // example.com
+    let destination_ip = Ipv4Addr::new(93, 184, 216, 34);  // example.com
 
     let mut traceroute_query = Traceroute::new(destination_ip, Config::default()
         .with_port(33480)
         .with_max_hops(20)
         .with_first_ttl(2)
         .with_interface("en0")
-        .with_number_of_queries(2));
+        .with_number_of_queries(2)
+        .with_protocol(UDP));
 
     // Calculate all hops upfront
     let traceroute_result = traceroute_query.perform_traceroute();
