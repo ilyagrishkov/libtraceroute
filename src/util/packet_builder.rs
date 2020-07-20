@@ -29,7 +29,7 @@ impl PacketBuilder {
         }
     }
 
-    /// Create a new UDP packet.
+    /// Create a new UDP packet
     fn build_udp_packet(source_mac: MacAddr, source_ip: Ipv4Addr, destination_ip: Ipv4Addr, ttl: u8, port: u16) -> Vec<u8> {
         let mut buf = [0u8; 66];
         let mut mut_ethernet_header = MutableEthernetPacket::new(&mut buf[..]).unwrap();
@@ -61,7 +61,7 @@ impl PacketBuilder {
         buf.to_vec()
     }
 
-    /// Create a new ICMP packet.
+    /// Create a new ICMP packet
     fn build_icmp_packet(source_mac: MacAddr, source_ip: Ipv4Addr, destination_ip: Ipv4Addr, ttl: u8) -> Vec<u8> {
         let mut buf = [0u8; 86];
         let mut mut_ethernet_header = MutableEthernetPacket::new(&mut buf[..]).unwrap();
@@ -91,7 +91,7 @@ impl PacketBuilder {
         buf.to_vec()
     }
 
-    /// Create a new TCP packet.
+    /// Create a new TCP packet
     fn build_tcp_packet(source_mac: MacAddr, source_ip: Ipv4Addr, destination_ip: Ipv4Addr, ttl: u8, port: u16) -> Vec<u8> {
         let mut buf = [0u8; 78];
         let mut mut_ethernet_header = MutableEthernetPacket::new(&mut buf[..]).unwrap();

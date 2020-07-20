@@ -14,20 +14,29 @@
    limitations under the License.
 */
 
+extern crate libtraceroute;
+
 use libtraceroute::{Traceroute, Config};
-use libtraceroute::util::Protocol::UDP;
+use libtraceroute::util::{Protocol, get_available_interfaces};
 use std::net::Ipv4Addr;
 
 fn main() {
     let destination_ip = Ipv4Addr::new(93, 184, 216, 34);  // example.com
 
+    let available_interfaces = get_available_interfaces();
+
+    let network_interface = match available_interfaces.iter().filter(|i| i.name == "en0").next() {
+        Some(i) => i.clone(),
+        None => panic!("no such interface available")
+    };
+
     let mut traceroute_query = Traceroute::new(destination_ip, Config::default()
         .with_port(33480)
         .with_max_hops(20)
         .with_first_ttl(2)
-        .with_interface("en0")
+        .with_interface(network_interface)
         .with_number_of_queries(2)
-        .with_protocol(UDP)
+        .with_protocol(Protocol::UDP)
         .with_timeout(1000));
 
     // Calculate all hops upfront

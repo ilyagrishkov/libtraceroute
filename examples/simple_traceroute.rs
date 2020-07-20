@@ -14,6 +14,8 @@
    limitations under the License.
 */
 
+extern crate libtraceroute;
+
 use libtraceroute::Traceroute;
 use std::net::Ipv4Addr;
 

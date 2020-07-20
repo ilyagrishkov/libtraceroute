@@ -31,9 +31,13 @@ use std::time::Duration;
 use async_std::task::block_on;
 
 #[derive(PartialEq)]
+/// Protocol to be used for traceroute
 pub enum Protocol {
+    /// UDP-based traceroute
     UDP,
+    /// TCP-based traceroute
     TCP,
+    /// ICMP-based traceroute
     ICMP
 }
 
@@ -87,23 +91,23 @@ impl Channel {
         }
     }
 
-    /// Change protocol of packet_builder.
+    /// Change protocol of packet_builder
     pub(crate) fn change_protocol(&mut self, new_protocol: Protocol) {
         self.packet_builder.protocol = new_protocol;
     }
 
-    /// Increments current TTL.
+    /// Increments current TTL
     pub(crate) fn increment_ttl(&mut self) -> u8 {
         self.ttl += 1;
         self.ttl - 1
     }
 
-    /// Checks whether the current TTL exceeds maximum number of hops.
+    /// Checks whether the current TTL exceeds maximum number of hops
     pub(crate) fn max_hops_reached(&self, max_hops: u8) -> bool {
         self.ttl > max_hops
     }
 
-    /// Sends packet.
+    /// Sends a packet
     pub(crate) fn send_to(&mut self, destination_ip: Ipv4Addr) {
         let (mut tx, _) = match channel(&self.interface, Default::default()) {
             Ok(pnet::datalink::Channel::Ethernet(tx, rx)) => (tx, rx),
@@ -117,7 +121,7 @@ impl Channel {
         }
     }
 
-    /// Waits for the expected ICMP packet for specified amount of time.
+    /// Waits for the expected ICMP packet for specified amount of time
     pub(crate) fn recv_timeout(&mut self, timeout: Duration) -> String {
         let processor = async_std::task::spawn(Self::recv(self.interface.clone(), self.payload_offset));
         let ip = block_on(async {
@@ -140,8 +144,8 @@ impl Channel {
     }
 }
 
-/// Returns the list of interfaces that are up, not loopback and have an IPv4 address
-/// and non-zero MAC address associated with them.
+/// Returns the list of interfaces that are up, not loopback, not point-to-point,
+/// and have an IPv4 address associated with them.
 pub fn get_available_interfaces() -> Vec<NetworkInterface> {
     let all_interfaces = pnet::datalink::interfaces();
 
