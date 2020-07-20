@@ -8,7 +8,7 @@ homepage = "https://github.com/ilyagrishkov/libtraceroute"
 repository = "https://github.com/ilyagrishkov/libtraceroute"
 description = "Cross-platform traceroute library for Rust"
 readme = "README.md"
-keywords = ["traceroute", "networking", "transport", "datalink", "udp", "icmp"]
+keywords = ["traceroute", "networking", "udp", "tcp", "icmp"]
 categories = ["network-anlysis"]
 
 [dependencies]
