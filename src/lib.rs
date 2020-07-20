@@ -33,6 +33,7 @@ pub struct Config {
     max_hops: u32,
     number_of_queries: u32,
     ttl: u8,
+    timeout: Duration,
     channel: util::Channel,
 }
 
@@ -48,7 +49,7 @@ pub struct TracerouteQueryResult {
 
 impl Default for Config {
     fn default() -> Self {
-        Config {port: 33434, max_hops: 30, number_of_queries: 3, ttl: 1, channel: Default::default()}
+        Config {port: 33434, max_hops: 30, number_of_queries: 3, ttl: 1, timeout: Duration::from_secs(1), channel: Default::default()}
     }
 }
 
@@ -86,7 +87,7 @@ impl Config {
             None => panic!("no such interface available")
         };
 
-        self.channel = util::Channel::new(&default_interface, self.port, self.ttl);
+        self.channel = util::Channel::new(default_interface, self.port, self.ttl);
         self
     }
 
@@ -95,21 +96,26 @@ impl Config {
         self.ttl = first_ttl;
         self
     }
+
+    /// Builder: Timeout per query.
+    pub fn with_timeout(mut self, timeout: u64) -> Self {
+        self.timeout = Duration::from_millis(timeout);
+        self
+    }
 }
 
 impl Iterator for Traceroute {
     type Item = TracerouteHop;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.done {
+        if self.done || self.config.channel.max_hops_reached(self.config.max_hops as u8) {
             return None;
         }
 
         let hop = self.calculate_next_hop();
         self.done = hop.query_result.iter()
             .filter(|ip| ip.addr == self.addr.to_string())
-            .next().is_some()
-            || self.config.ttl > self.config.max_hops as u8;
+            .next().is_some();
         Some(hop)
     }
 }
@@ -159,7 +165,7 @@ impl Traceroute {
         let now = std::time::SystemTime::now();
 
         self.config.channel.send_to(self.addr);
-        let hop_ip = self.config.channel.recv();
+        let hop_ip = self.config.channel.recv_timeout(Duration::from_secs(1));
         TracerouteQueryResult {
             rtt: now.elapsed().unwrap_or(Duration::from_millis(0)),
             addr: hop_ip,

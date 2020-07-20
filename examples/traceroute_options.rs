@@ -27,7 +27,8 @@ fn main() {
         .with_first_ttl(2)
         .with_interface("en0")
         .with_number_of_queries(2)
-        .with_protocol(UDP));
+        .with_protocol(UDP)
+        .with_timeout(1000));
 
     // Calculate all hops upfront
     let traceroute_result = traceroute_query.perform_traceroute();

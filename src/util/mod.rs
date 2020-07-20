@@ -18,7 +18,7 @@ extern crate pnet;
 
 pub(crate) mod packet_builder;
 
-use pnet::datalink::{NetworkInterface, MacAddr, DataLinkSender, DataLinkReceiver};
+use pnet::datalink::{NetworkInterface, MacAddr};
 use pnet::packet::ethernet::{EtherTypes, EthernetPacket};
 use pnet::packet::icmp::{IcmpPacket, IcmpTypes};
 use pnet::packet::ip::IpNextHeaderProtocols;
@@ -27,6 +27,8 @@ use pnet::packet::Packet;
 use pnet::datalink::channel;
 use std::net::{IpAddr, Ipv4Addr};
 use std::str::FromStr;
+use std::time::Duration;
+use async_std::task::block_on;
 
 pub enum Protocol {
     UDP,
@@ -35,8 +37,7 @@ pub enum Protocol {
 }
 
 pub(crate) struct Channel {
-    tx: Box<dyn DataLinkSender>,
-    rx: Box<dyn DataLinkReceiver>,
+    interface: NetworkInterface,
     packet_builder: packet_builder::PacketBuilder,
     payload_offset: usize,
     port: u16,
@@ -54,12 +55,12 @@ impl Default for Channel {
             .expect("no interfaces available")
             .clone();
 
-        Channel::new(&default_interface, 33434, 1)
+        Channel::new(default_interface, 33434, 1)
     }
 }
 
 impl Channel {
-    pub fn new(network_interface: &NetworkInterface, port: u16, ttl: u8) -> Self {
+    pub fn new(network_interface: NetworkInterface, port: u16, ttl: u8) -> Self {
         let source_ip = network_interface.ips
             .iter()
             .filter(|i| i.is_ipv4())
@@ -76,14 +77,8 @@ impl Channel {
             if network_interface.is_loopback() { 14 } else { 0 }
         } else { 0 };
 
-        let (tx, rx) = match channel(&network_interface, Default::default()) {
-            Ok(pnet::datalink::Channel::Ethernet(tx, rx)) => (tx, rx),
-            Ok(_) => panic!("libtraceroute: unhandled util type"),
-            Err(e) => panic!("libtraceroute: unable to create util: {}", e),
-        };
-
         Channel {
-            tx, rx,
+            interface: network_interface.clone(),
             packet_builder: packet_builder::PacketBuilder::new(Protocol::UDP, network_interface.mac.unwrap(), source_ip),
             payload_offset,
             port, ttl,
@@ -96,48 +91,48 @@ impl Channel {
         self.packet_builder.protocol = new_protocol;
     }
 
+    /// Increments current TTL.
     pub(crate) fn increment_ttl(&mut self) -> u8 {
         self.ttl += 1;
         self.ttl - 1
     }
 
+    /// Checks whether the current TTL exceeds maximum number of hops.
+    pub(crate) fn max_hops_reached(&self, max_hops: u8) -> bool {
+        self.ttl > max_hops
+    }
+
     /// Sends packet.
     pub(crate) fn send_to(&mut self, destination_ip: Ipv4Addr) {
+        let (mut tx, _) = match channel(&self.interface, Default::default()) {
+            Ok(pnet::datalink::Channel::Ethernet(tx, rx)) => (tx, rx),
+            Ok(_) => panic!("libtraceroute: unhandled util type"),
+            Err(e) => panic!("libtraceroute: unable to create util: {}", e),
+        };
         let buf = self.packet_builder.build_packet(destination_ip, self.ttl, self.port + self.seq);
-        self.tx.send_to(&buf, None);
+        tx.send_to(&buf, None);
         self.seq += 1;
     }
 
-    /// Waits for ICMP time-to-live-exceeded packet.
-    pub(crate) fn recv(&mut self) -> String {
-        let now = std::time::SystemTime::now();
-        loop {
-            match self.process_incoming_packet() {
-                Ok(ip) => return ip,
-                Err(_) => {
-                    match now.elapsed() {
-                        Ok(t) => {
-                            if t.as_millis() > 500 {
-                                return String::from("*");
-                            }
-                        }
-                        Err(_) => return String::from("*")
-                    }
-                }
+    /// Waits for the expected ICMP packet for specified amount of time.
+    pub(crate) fn recv_timeout(&mut self, timeout: Duration) -> String {
+        let processor = async_std::task::spawn(Self::recv(self.interface.clone(), self.payload_offset));
+        let ip = block_on(async {
+            match async_std::future::timeout(timeout, processor).await {
+                Ok(ip) => ip,
+                Err(_) => String::from("*")
             }
-        }
+        });
+        ip
     }
 
-    /// Start capturing packets until until expected ICMP packet was received.
-    pub(crate) fn process_incoming_packet(&mut self) -> Result<String, &'static str> {
-        match self.rx.next() {
-            Ok(packet) => {
-                if self.payload_offset > 0 && packet.len() > self.payload_offset {
-                    return handle_ipv4_packet(&packet[self.payload_offset..]);
-                }
-                return handle_ethernet_frame(packet);
+    /// Waits for the expected ICMP packet to arrive until interrupted.
+    async fn recv(interface: NetworkInterface, payload_offset: usize) -> String {
+        loop {
+            match process_incoming_packet(interface.clone(), payload_offset) {
+                Ok(ip) => return ip,
+                Err(_) => {}
             }
-            Err(e) => panic!("libtraceroute: unable to receive packet: {}", e),
         }
     }
 }
@@ -209,5 +204,23 @@ fn handle_ethernet_frame(packet: &[u8]) -> Result<String, &'static str> {
     match ethernet.get_ethertype() {
         EtherTypes::Ipv4 => return handle_ipv4_packet(ethernet.payload()),
         _ => Err("wrong packet")
+    }
+}
+
+/// Start capturing packets until until expected ICMP packet was received.
+fn process_incoming_packet(interface: NetworkInterface, payload_offset: usize) -> Result<String, &'static str> {
+    let (_, mut rx) = match channel(&interface, Default::default()) {
+        Ok(pnet::datalink::Channel::Ethernet(tx, rx)) => (tx, rx),
+        Ok(_) => panic!("libtraceroute: unhandled util type"),
+        Err(e) => panic!("libtraceroute: unable to create util: {}", e),
+    };
+    match rx.next() {
+        Ok(packet) => {
+            if payload_offset > 0 && packet.len() > payload_offset {
+                return handle_ipv4_packet(&packet[payload_offset..]);
+            }
+            return handle_ethernet_frame(packet);
+        }
+        Err(e) => panic!("libtraceroute: unable to receive packet: {}", e),
     }
 }
