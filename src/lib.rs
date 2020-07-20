@@ -35,7 +35,7 @@
 //!
 //! ### Traceroute with default configuration:
 //!
-//! ```rust,no-run
+//! ```rust,no-run,should_panic
 //! extern crate libtraceroute;
 //!
 //! use libtraceroute::Traceroute;
@@ -57,7 +57,7 @@
 //!
 //! ### Traceroute with custom configuration:
 //!
-//! ```rust,no-run
+//! ```rust,no-run,should_panic
 //! extern crate libtraceroute;
 //!
 //! use libtraceroute::{Traceroute, Config};
