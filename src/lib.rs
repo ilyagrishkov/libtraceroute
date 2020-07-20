@@ -150,7 +150,7 @@ impl Traceroute {
         let mut query_results = Vec::<TracerouteQueryResult>::new();
         for _ in 0..self.config.number_of_queries {
             let result = self.get_next_query_result();
-            if query_results.iter()
+            if result.addr == "*" || query_results.iter()
                 .filter(|query_result| query_result.addr == result.addr)
                 .next().is_none() {
                 query_results.push(result)

@@ -30,6 +30,7 @@ use std::str::FromStr;
 use std::time::Duration;
 use async_std::task::block_on;
 
+#[derive(PartialEq)]
 pub enum Protocol {
     UDP,
     TCP,
@@ -111,7 +112,9 @@ impl Channel {
         };
         let buf = self.packet_builder.build_packet(destination_ip, self.ttl, self.port + self.seq);
         tx.send_to(&buf, None);
-        self.seq += 1;
+        if self.packet_builder.protocol != Protocol::TCP {
+            self.seq += 1;
+        }
     }
 
     /// Waits for the expected ICMP packet for specified amount of time.
