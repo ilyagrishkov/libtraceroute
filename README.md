@@ -6,7 +6,7 @@
 <div align="center"> 
 <span margin=15><img src=https://img.shields.io/github/workflow/status/ilyagrishkov/libtraceroute/Rust?style=for-the-badge&logo=appveyor/></span>
 <span margin=15><img src=https://img.shields.io/github/license/ilyagrishkov/libtraceroute?style=for-the-badge&logo=appveyor/></span>
-<span margin=15><img src=https://img.shields.io/badge/Rust-1.44.1-orange?style=for-the-badge&logo=appveyor/></span>
+<span margin=15><img src=https://img.shields.io/crates/v/libtraceroute?style=for-the-badge&logo=appveyor/></span>
  
 </div>
 
