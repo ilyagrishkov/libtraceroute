@@ -13,7 +13,7 @@
 <br/>
 
 ## <div align="center"> OVERVIEW </div>
-**Libtraceroute** is a cross-platform traceroute library for Rust, that allows displaying possible routes (paths) and measuring transit delays of packets across an Internet Protocol (IP) network. Libtraceroute uses ![pnet](https://github.com/libpnet/libpnet), a low-level networking library, to send and capture packets at the  data link layer, which allows it to operate without the need for root privileges on MacOS and Windows, but still requires sudo on Linux. 
+**Libtraceroute** is a cross-platform traceroute library for Rust, that allows displaying possible routes (paths) and measuring transit delays of packets across an Internet Protocol (IP) network. Libtraceroute uses [pnet](https://github.com/libpnet/libpnet), a low-level networking library, to send and capture packets at the  data link layer, which allows it to operate without the need for root privileges on MacOS and Windows, but still requires sudo on Linux. 
 
 
 <br/>
@@ -34,7 +34,7 @@ To use **libtraceroute** in your project, add the following to your Cargo.toml:
 libtraceroute = "0.1.0"
 ```
 
-**NOTE!** If you are using Windows, follow these instructions to make ![pnet](https://github.com/libpnet/libpnet) work:
+**NOTE!** If you are using Windows, follow these instructions to make [pnet](https://github.com/libpnet/libpnet) work:
 > ### Windows
 > * You must use a version of Rust which uses the MSVC toolchain
 > * You must have [WinPcap](https://www.winpcap.org/) or [npcap](https://nmap.org/npcap/) installed
