@@ -14,4 +14,4 @@ categories = ["network-anlysis"]
 [dependencies]
 pnet = "0.27.2"
 rand = "0.7.3"
-async-std = "1.9.0"
+async-std = "1.10.0"
